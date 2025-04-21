@@ -1,0 +1,402 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# loading
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(data.table)
+library(patchwork)
+library(parallel)
+set.seed(2)
+```
+
+# training set 
+```{r}
+tr_ori=rbind(c(0,0,0,1,0,0), #1
+          c(0,1,0,0,1,0), #2
+          c(0,0,1,0,0,1), #3
+          c(0,0,0,1,1,0), #4
+          c(0,0,0,0,1,0), #5
+          c(1,0,0,0,1,1), #6
+          c(0,0,1,1,1,1), #7
+          c(1,1,0,1,0,0), #8
+          c(1,1,1,0,0,1), #9
+          c(1,1,0,0,1,0), #10
+          c(1,1,0,1,1,1), #11
+          c(1,1,1,1,0,0), #12
+          c(1,1,1,1,1,1),  #13
+          c(1,1,1,1,0,1), #14
+          c(1,1,1,0,1,0), #15
+          c(1,1,1,1,1,0) #16
+          )
+```
+
+```{r}
+tr=tr_ori
+#cue validity
+vali_list=list()
+for (k in 1:20000){ #5000
+  set.seed(k)
+  tr=tr_ori[order(sample(1:16)),]
+  vali=rep(NA,6)
+  for (i in 1:6){
+    idx_A=which(tr[,i]==0)
+    idx_B=which(tr[,i]==1)
+    dcorrect=sum(outer(idx_A, idx_B, function(x, y) y > x))
+    dtotal=length(idx_A)*length(idx_B)
+    vali[i]=(dcorrect+1)/(dtotal+2)
+  }
+  if (sum(vali>0.5)>=6){
+    vali_list[[as.character(k)]]=vali
+  }
+}
+unlist(vali_list) %>% quantile()
+
+# sapply(vali_list,sd) %>% hist
+# which.max(sapply(vali_list,sd))
+```
+
+#testing set
+```{r}
+tr_cha=tr_ori %>% apply(1, function(x){as.character(x) %>% paste(collapse = "")})
+sti=expand.grid(c(0,1),c(0,1),c(0,1),c(0,1),c(0,1),c(0,1)) %>%
+  apply(1, function(x){as.character(x) %>% paste(collapse = "")})
+
+xx=combn(sti, 2) %>% t%>% as.data.frame()
+# intersect(which(xx$V1 %in% tr_cha),which(xx$V2 %in% tr_cha))
+df.ref=xx[-intersect(which(xx$V1 %in% tr_cha),which(xx$V2 %in% tr_cha)),]
+# intersect(which(xx2$V1 %in% tr_cha),which(xx2$V2 %in% tr_cha))
+```
+
+# simulation
+```{r}
+myNorLi<-function(st,cvali){
+  tmp=as.numeric(unlist(strsplit(st,"*")))
+  prod(abs(1-tmp-cvali))
+}
+
+myTraditional<-function(cvali,nam){
+  #normative
+  vli=sti %>% lapply(myNorLi,cvali) 
+  names(vli)=sti
+  df.li=df.ref
+  df.li$V1_nor=df.ref %>% apply(1, function(x){vli[[x[1]]]/(vli[[x[1]]]+vli[[x[2]]])})
+  df.li$V2_nor=1-df.li$V1_nor
+  
+  ovali=order(cvali,decreasing =T)[1:sum(cvali>0.5)]
+  svali=which(cvali>0.5)
+  bvali=order(cvali,decreasing =T)[1]
+  
+  #take the best
+  df.li$V1_ttb=0.5
+  df.li$V2_ttb=0.5
+  for (i in 1:nrow(df.li)){
+    v1=strsplit(df.li$V1[i],"*") %>% unlist() %>% as.numeric()
+    v2=strsplit(df.li$V2[i],"*") %>% unlist() %>% as.numeric()
+    for (k in 1:length(ovali)){
+      v=v1[ovali[k]]-v2[ovali[k]]
+      if (v==0){next}
+      if (sign(v)==1){
+        df.li$V1_ttb[i]=1;df.li$V2_ttb[i]=0;break
+      }else{
+        df.li$V2_ttb[i]=1;df.li$V1_ttb[i]=0;break
+      }
+    }
+  }
+  
+  #tally
+  df.li$V1_tal=0.5
+  df.li$V2_tal=0.5
+  for (i in 1:nrow(df.li)){
+    v1=strsplit(df.li$V1[i],"*") %>% unlist() %>% as.numeric()
+    v2=strsplit(df.li$V2[i],"*") %>% unlist() %>% as.numeric()
+    t1=sum(v1[svali])
+    t2=sum(v2[svali])
+    if (t1>t2){
+      df.li$V1_tal[i]=1;df.li$V2_tal[i]=0
+    }else if (t1<t2){
+      df.li$V2_tal[i]=1;df.li$V1_tal[i]=0
+    }
+  }
+  return(df.li)
+}
+```
+
+```{r}
+##################### SS
+h2=list()
+for (k in 1:15){
+  for (j in 2:16){
+    if (k>=j){next}
+    h2[[length(h2)+1]]=c(k,j)
+  }
+}
+h1=lapply(h2, function(x){c(x[2],x[1])})
+h_all=list(h1,h2)
+trlen=length(h1)
+############################
+myCueFeature<-function(x,mylis,fea){
+  mylis[x[1],fea]-mylis[x[2],fea]
+}
+
+myCueTTB<-function(x,mylis,fea){
+  tmp=mylis[x[1],fea]-mylis[x[2],fea]
+  tmp2=tmp[which(tmp!=0)[1]]
+  if (is.na(tmp2)){0}else{tmp2}
+}
+
+myCueTally<-function(x,mylis,fea){
+  sum(mylis[x[1],fea ])-sum(mylis[x[2],fea])
+} 
+
+myDis<-function(ss,obs,dis){
+  abs(obs-ss)<=dis
+}
+```
+
+```{r}
+myABC<-function(vali,nam,N,myCue,dis){
+  set.seed(as.numeric(nam))
+  tr=tr_ori[order(sample(1:16)),]
+  
+  df.li=df.ref
+  #ABC
+  df.li$V1_ss=NA #ttb
+  df.li$V2_ss=NA
+
+  d.ss=rbind(
+    data.frame(truth="h1",ss=unlist(lapply(h_all[[1]],myCue,tr,vali))),
+    data.frame(truth="h2",ss=unlist(lapply(h_all[[2]],myCue,tr,vali))))
+  for (k in 1:nrow(df.li)){
+    v1=strsplit(df.li$V1[k],"*") %>% unlist() %>% as.numeric()
+    v2=strsplit(df.li$V2[k],"*") %>% unlist() %>% as.numeric()
+    
+    obs=myCue(c(1,2),rbind(v1,v2),vali)
+    
+    ans=rep(NA,100)
+    for (i in 1:100){
+      x=d.ss[sample(1:nrow(d.ss)),]
+      x2=x[myDis(x$ss,obs,dis),]
+      if (nrow(x2)==0){next}
+      tb=table(x2$truth[1:N])
+      ans[i]=sample(names(tb[tb==max(tb)]),1)
+    }
+    df.li$V1_ss[k]=sum(ans=="h1")/length(ans)
+    df.li$V2_ss[k]=sum(ans=="h2")/length(ans)
+  }
+  return(df.li)
+}
+```
+
+```{r}
+# subset(d.ss,ss==-6)[,"truth"] %>% table()
+```
+
+```{r}
+df.App=data.frame(seed=c(1:length(vali_list)),vsd=unlist(lapply(vali_list,sd))) %>% mutate(ttb=NA,tal=NA,ttb_ss=NA,tal_ss_0=NA,tal_ss_1=NA)
+
+myRun<-function(par){
+  k=par[1]
+  N=par[2]
+  
+  df.App=df.App[k,]
+  
+  cvali=vali_list[[k]]
+  nam=names(vali_list)[k]
+  df.li1=myTraditional(cvali,nam)
+  
+  v1_nor=as.numeric(df.li1$V1_nor>0.5) 
+  v2_nor=as.numeric(df.li1$V2_nor>0.5)
+  
+  df.App$ttb[1]= mean(v1_nor*df.li1$V1_ttb+v2_nor*df.li1$V2_ttb)
+  df.App$tal[1]= mean(v1_nor*df.li1$V1_tal+v2_nor*df.li1$V2_tal)
+  
+  #ABC
+  ovali=order(cvali,decreasing =T)[1:sum(cvali>0.5)]
+  
+  df.li2=myABC(ovali,nam,N,myCue=myCueTTB,dis=0)
+  df.App$ttb_ss[1]=mean(v1_nor*df.li2$V1_ss+v2_nor*df.li2$V2_ss)
+  
+  svali=order(cvali,decreasing =T)[1:sum(cvali>0.5)]
+  
+  df.li3=myABC(svali,nam,N,myCue=myCueTally,dis=0)
+  df.App$tal_ss_0[1]=mean(v1_nor*df.li3$V1_ss+v2_nor*df.li3$V2_ss,na.rm=T)
+  
+  # svali=order(cvali,decreasing =T)[1:round(sum(cvali>0.5)/2)]
+
+  df.li4=myABC(svali,nam,N,myCue=myCueTally,dis=1)
+  df.App$tal_ss_1[1]=mean(v1_nor*df.li4$V1_ss+v2_nor*df.li4$V2_ss,na.rm=T)
+  
+  save(df.App,df.li1,df.li2,df.li3,df.li4,k,N,vali_list,file=
+         paste0("results/envir",k,"_sample",N,".Rda"))
+}
+
+# tmp=expand.grid(k=c(1:100),N=c(30,50,100)) %>% arrange_all()
+tmp=expand.grid(k=c(1:400),N=c(20)) %>% arrange_all()
+wholelist=split(tmp,seq(nrow(tmp))) %>% 
+  lapply(function(row) as.numeric(row))
+
+mclapply(wholelist, myRun,mc.cores = 12)
+
+myRun(c(1,5))
+```
+
+```{r}
+# myMeansd<-function(p){sd(p)/mean(p)}
+df.pic=data.frame()
+sz=100
+for (k in 1:sz){
+  load(paste0("results/envir",k,"_sample",20,".Rda"))
+  df.pic=rbind(df.pic,df.App)
+}
+# df.pic$vsd=unlist(sapply(vali_list, myMeansd))[1:sz]#####
+df.pic$vm=unlist(sapply(vali_list, mean))[1:sz]
+df.pic$vm_group=df.pic$vm>median(df.pic$vm)
+df.pic30=df.pic %>% mutate(sample="N=20")
+
+sz=100
+df.pic=data.frame()
+for (k in 1:sz){
+  load(paste0("results/envir",k,"_sample",100,".Rda"))
+  df.pic=rbind(df.pic,df.App)
+}
+# df.pic$vsd=unlist(sapply(vali_list, myMeansd))[1:sz]#####
+df.pic$vm=unlist(sapply(vali_list, mean))[1:sz]
+df.pic$vm_group=df.pic$vm>median(df.pic$vm)
+df.pic100=df.pic %>% mutate(sample= "N=100")
+
+df.pic=rbind(df.pic30,df.pic100) %>%
+    pivot_longer(cols = c("ttb","tal","ttb_ss","tal_ss_1")) %>%
+  mutate(sample=factor(sample,levels =c("N=20","N=100") ))
+```
+
+```{r}
+df.pic%>%
+  mutate(Model=factor(name,levels = c("ttb","tal","ttb_ss","tal_ss_1"),
+                     # labels = c("Take-the-best","Tally","ABC Take-the-best","ABC Tally")
+                     labels = c("TTB","Tally","ABC TTB","ABC Tally")
+                     ))%>%
+  mutate(vm_group=factor(vm_group,levels = c(FALSE,TRUE),
+                     labels = c("Small Cue Validity","Large Cue Validity"),
+                     
+                     ))%>%
+  ggplot(aes(x=vsd,y=value,color=Model,shape=Model))+
+  facet_grid(vars(sample),vars(vm_group))+
+  # facet_wrap(~vm_group)+
+  geom_point(size=4)+
+  scale_color_manual(values = c(alpha("royalblue",0.6),
+                                alpha("violet",0.6),
+                                "royalblue","violet"))+
+  scale_shape_manual(values = c(16,16,3,3))+
+  geom_hline(yintercept = 0.5,linetype="dotted")+
+  xlab("SD (Cue Validity)")+
+  ylab("ACC")+
+  # geom_smooth(aes(x=vsd,y=ttb),method="lm",color="blue")+
+  # geom_smooth(aes(x=vsd,y=tal),method="lm",color="red")+
+  # geom_smooth(aes(x=vsd,y=ttb_ss),method="lm",color="darkgreen")+
+  # geom_smooth(aes(x=vsd,y=tal_ss_0),method="lm",color="violet")+
+  theme_classic()+
+  theme(text = element_text(size=16),
+        legend.text = element_text(size=12)
+        )
+
+# mean(df.App$acc_ttb,na.rm = T)
+# mean(df.App$acc_tal,na.rm = T)
+
+ggsave(file="f_ttb.pdf",width = 10,height = 6)
+```
+
+```{r}
+mean(df.pic$tal_ss_1-df.pic$tal_ss_0)
+mean(df.pic$tal_ss_1-df.pic$tal_ss_2)
+```
+
+```{r}
+myCompensatory<-function(df){
+  cue=which.max(vali_list[[df$seed[1]]])
+  
+  v1=rep(0,6);v2=rep(1,6)
+  
+  v1[cue]=1
+  v2[cue]=0
+  v1=v1 %>% paste0(collapse = "")
+  v2=v2 %>% paste0(collapse = "")
+  
+  x=intersect(which(df$V1==v1),which(df$V2==v2))
+  y=intersect(which(df$V1==v2),which(df$V2==v1))
+  
+  if (length(x)+length(y)==0){return(NA)}
+  
+  if (length(x)){
+    return(list(df$V1_nor[x]<df$V2_nor[x],x,"x"))
+  }else{
+    return(list(df$V1_nor[y]>df$V2_nor[y],y,"y"))
+  }
+}
+
+df.li.all=data.frame()
+for (k in 1:400){
+  load(paste0("results/envir",k,"_sample",20,".Rda"))
+  df.li=df.li1 %>%  mutate(seed=k)
+  tmp=myCompensatory(df.li)
+  
+  if (sum(is.na(tmp))|| tmp[1]==FALSE){next}
+  
+  df1=df.li[tmp[[2]] ,]
+    
+  df1$vsd=sd(vali_list[[k]])
+  df1$vm=mean(vali_list[[k]])
+  
+  if (tmp[[3]]=="x"){
+    df1$nor=df.li$V2_nor[tmp[[2]]]
+    df1$v_ss=df.li2$V2_ss[tmp[[2]]]
+  }else{
+    df1$nor=df.li$V1_nor[tmp[[2]]]
+    df1$v_ss=df.li2$V1_ss[tmp[[2]]]
+  }
+  
+  df.li.all=rbind(df.li.all,df1)
+}
+
+df.li.all=df.li.all[1:300,]
+
+df.li.all$vm_group=(df.li.all$vm>median(df.li.all$vm)) %>% 
+  factor(levels=c(F,T),labels = c("Small Cue Validity","Large Cue Validity"))
+df.li.all$vsd_group=(df.li.all$vsd>median(df.li.all$vsd)) %>% 
+  factor(levels=c(F,T),labels = c("Low Cue Variation","High Cue Variation"))
+
+table(df.li.all$vm_group)
+sds=median(df.li.all$vsd[df.li.all$vm_group=="Small Cue Validity"])
+sdl=median(df.li.all$vsd[df.li.all$vm_group=="Large Cue Validity"])
+
+df.li.all=df.li.all %>% 
+  mutate(vsd_group=ifelse(vm_group=="Small Cue Validity",vsd>sds,vsd>sdl)) %>% 
+  mutate(vsd_group=factor(vsd_group,levels=c(F,T),labels = c("Low Cue Variation","High Cue Variation")))
+
+
+table(df.li.all$vsd_group,df.li.all$vm_group)
+
+
+df.li.all%>%
+  ggplot(aes(x=nor,y=v_ss))+
+  geom_point(size=5,alpha=0.6,color="brown")+
+  facet_grid(vars(vsd_group),vars(vm_group))+
+  theme_classic()+
+  xlab("Bayesian Benchmark Posterior")+
+  ylab("ABC TTB Choosing Proportion")+
+  ggtitle("Compensatory Environments")+
+  theme(text = element_text(size=19))
+  
+ggsave(file="compensatory.pdf",width = 10,height = 6)
+# cor.test(df.li.all$nor,df.li.all$v_ss)
+```
+
+```{r}
+# for (k in 1:400){
+#   unlink(paste0("results/envir",k,"_sample",30,".Rda"))
+# }
+```

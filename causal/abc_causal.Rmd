@@ -1,0 +1,284 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# loading
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(data.table)
+library(patchwork)
+library(parallel)
+library(transport)
+set.seed(2)
+```
+
+```{r}
+myCue_FullFea<-function(df){
+  c(df$ss_count_i_A_1[1],
+    df$ss_count_i_A_2[1],
+    df$ss_count_i_A_3[1],
+    df$ss_count_i_B_1[1],
+    df$ss_count_i_B_2[1],
+    df$ss_count_i_B_3[1],
+    df$ss_delay_i_A_1[1],
+    df$ss_delay_i_A_2[1],
+    df$ss_delay_i_A_3[1],
+    df$ss_delay_i_B_1[1],
+    df$ss_delay_i_B_2[1],
+    df$ss_delay_i_B_3[1]
+    )
+}
+
+myCue_MeanFea<-function(df){
+  c(
+    mean(df$ss_count_i_A_1[1],df$ss_count_i_A_2[1],df$ss_count_i_A_3[1]),
+    mean(df$ss_count_i_B_1[1],df$ss_count_i_B_2[1],df$ss_count_i_B_3[1]),
+    mean(df$ss_delay_i_A_1[1],df$ss_delay_i_A_2[1],df$ss_delay_i_A_3[1]),
+    mean(df$ss_delay_i_B_1[1],df$ss_delay_i_B_2[1],df$ss_delay_i_B_3[1])
+    )
+}
+
+myDis<-function(a,b){
+  sqrt(sum((a-b)^2))
+}
+# 
+# dis_file_name="dis_FullFea/"
+# agent_file_name="agent_FullFea/"
+# myCue=myCue_FullFea
+
+dis_file_name="dis_MeanFea/"
+agent_file_name="agent_MeanFea/"
+myCue=myCue_MeanFea
+```
+
+```{r}
+# df.sim=read.csv("mySimSS_combined.csv")
+# save(df.sim,file="mySimSS_combined.Rda")
+```
+
+
+```{r}
+df.exp=read.csv("ss_exp1a.csv")%>%
+  select(seed,truth,condition,id,A_pro,B_pro,
+         ss_count_i_A_1,ss_count_i_A_2,ss_count_i_A_3,
+         ss_count_i_B_1,ss_count_i_B_2,ss_count_i_B_3,
+         ss_delay_i_A_1,ss_delay_i_A_2,ss_delay_i_A_3,
+         ss_delay_i_B_1,ss_delay_i_B_2,ss_delay_i_B_3
+         )
+
+load("mySimSS_combined.Rda")
+df.sim=df.sim %>%
+    select(seed,truth,condition,id,A_pro,B_pro,
+         ss_count_i_A_1,ss_count_i_A_2,ss_count_i_A_3,
+         ss_count_i_B_1,ss_count_i_B_2,ss_count_i_B_3,
+         ss_delay_i_A_1,ss_delay_i_A_2,ss_delay_i_A_3,
+         ss_delay_i_B_1,ss_delay_i_B_2,ss_delay_i_B_3
+         )
+
+ss_list=c("ss_count_i_A_1","ss_count_i_A_2","ss_count_i_A_3",
+         "ss_count_i_B_1","ss_count_i_B_2","ss_count_i_B_3",
+         "ss_delay_i_A_1","ss_delay_i_A_2","ss_delay_i_A_3",
+         "ss_delay_i_B_1","ss_delay_i_B_2","ss_delay_i_B_3")
+
+for (k in 1:length(ss_list)){
+  tmp=c(df.exp[,ss_list[k]],df.sim[,ss_list[k]])
+  tmp2=scale(tmp) %>% as.vector()
+  df.exp[,ss_list[k]]=tmp2[1:nrow(df.exp)]
+  df.sim[,ss_list[k]]=tmp2[(nrow(df.exp)+1):length(tmp2)]
+}
+# df.ppl=read.csv("ppl_exp1a.csv")
+# x=df.ppl %>% subset(id==df$id[1])
+```
+
+```{r}
+df.sim1=df.sim %>%subset(condition=="reliable")
+t0=Sys.time()
+ss_all_r=df.sim1 %>% split(df.sim1$id)%>% lapply(myCue)
+Sys.time()-t0
+
+df.sim2=df.sim %>%subset(condition=="unreliable")
+t0=Sys.time()
+ss_all_u=df.sim2 %>% split(df.sim2$id)%>% lapply(myCue)
+Sys.time()-t0
+
+for(k in 1: nrow(df.exp)){
+  obs=myCue(df.exp[k,])
+  if (df.exp$condition[k]=="reliable"){
+    ss=ss_all_r %>% lapply(myDis,b=obs)
+    df.ss=df.sim1 %>% select(truth) %>%
+      mutate(ss=unlist(ss))
+  }else{
+    ss=ss_all_u %>% lapply(myDis,b=obs)
+    df.ss=df.sim2 %>% select(truth) %>%
+      mutate(ss=unlist(ss))
+  }
+  save(df.ss, file=paste0(dis_file_name,df.exp$id[k],".Rda"))
+}
+```
+
+```{r}
+N=100
+E_set=seq(0.4,3,0.2)
+S_set=c("GG","GN","GP","NG","NN","NP","PG","PN","PP")
+a_num=1000 #agent number
+
+myRun<-function(k){
+  load(paste0(dis_file_name,df.exp$id[k],".Rda"))
+  df.E=data.frame()
+  for (E in E_set){
+    df=df.exp[k,] %>%
+      select(seed,truth,condition,id) %>%
+      slice(rep(1, length(S_set))) %>%
+      mutate(E=E,ans = S_set,agent=0)
+    for (j in 1:a_num){
+      df.ss=df.ss[sample(1:nrow(df.ss)),]
+      tb=subset(df.ss,ss<=E)$truth[1:N] %>% table()
+      ans=sample(names(tb[tb==max(tb)]),1)
+      df$agent[df$ans==ans]=df$agent[df$ans==ans]+1
+    }
+    df$prob=df$agent/a_num 
+    df.E=rbind(df.E,df)
+  }
+  save(df.E,file=paste0(agent_file_name,df.exp$id[k],".Rda"))
+}
+
+# wholelist=c(1:nrow(df.exp)) %>% as.list()
+wholelist=c(which(!paste0(df.exp$id,".Rda")%in%list.files(agent_file_name))) %>% as.list()
+mclapply(wholelist, myRun,mc.cores = 12)
+
+df.ss %>%
+  subset(truth%in% c("NN","NP"))%>%
+  ggplot(aes(x=ss))+
+  geom_histogram()+
+  facet_wrap(~truth)
+```
+
+```{r}
+# myLink<-function(d){
+#   d=d %>% mutate(condition=unlist(sapply(strsplit(id,"_"),"[[",4)),
+#                  truth=unlist(sapply(strsplit(id,"_"),"[[",3))) %>%
+#     mutate(ans_A=substr(ans,1,1) , ans_B=substr(ans,2,2)) %>%
+#     mutate(truth_A=substr(truth,1,1) , truth_B=substr(truth,2,2))
+#  
+#   x1=d %>% 
+#     mutate(ans=ans_A,state=truth_A,target="A") %>%
+#     group_by(ans,truth,condition,target, id) %>% 
+#     summarise(prob=sum(prob)) %>% 
+#     group_by(ans,truth,condition,target)%>%
+#     summarise(prob=mean(prob))
+#   x2=d %>% 
+#     mutate(ans=ans_B,state=truth_B,target="B") %>%
+#     group_by(ans,truth,condition,target, id) %>% 
+#     summarise(prob=sum(prob)) %>% 
+#     group_by(ans,truth,condition,target)%>%
+#     summarise(prob=mean(prob))
+#   
+#   rbind(x1,x2)
+# }
+# 
+# d.md=df.all %>%  subset(E==4.4) %>% myLink()
+# d.p=df.p%>% myLink()
+# d.pic=merge(d.md,d.p,by=c("ans","truth","condition","target"))
+# 
+# d.pic %>% 
+#   ggplot(aes(x=prob.x,y=prob.y,color=ans))+
+#   geom_point()+
+#   scale_y_continuous(limits = c(0,1))+
+#   scale_x_continuous(limits = c(0,1))
+
+# cor.test(d.pic$prob.x,d.pic$prob.y)
+
+
+# df.all %>% 
+#   subset(E==4.4)%>%
+#   subset(condition=="reliable")%>%
+#   group_by(truth,ans)%>%
+#   summarise(prob=mean(prob)) %>%
+#   ggplot(aes(x=ans,y=truth,fill=prob))+
+#   geom_tile()+
+#   scale_fill_gradientn(colours = c("white","black"))
+# 
+# df2=df.all%>% subset(E==2) %>%  subset(condition=="reliable")
+```
+
+```{r}
+# agent_file_name="agent_FullFea/"
+agent_file_name="agent_MeanFea/"
+df.all=data.frame()
+for (k in 1: nrow(df.exp)){
+  # tryCatch( {load(paste0(agent_file_name,df.exp$id[k],".Rda"))},
+  #           error=function(e){})
+  load(paste0(agent_file_name,df.exp$id[k],".Rda"))
+  df.all=rbind(df.all,df.E)
+}
+
+df.ppl=read.csv("ppl_exp1a.csv")
+
+df.p=data.frame()
+for (k in unique(df.ppl$id)){
+  df=data.frame(id=k,ans=S_set,ppl=0)
+  for (i in 1:nrow(df)){
+    df$ppl[i]=sum(df.ppl$id==k& df.ppl$ans==df$ans[i])
+  }
+  df$prob=df$ppl/sum(df$ppl)
+  df.p=rbind(df.p,df)
+}
+df.p=df.p %>% 
+  mutate(truth=unlist(sapply(strsplit(id,"_"),"[[",3)))
+```
+
+```{r}
+wd_list=list()
+E_set=names(table(df.all$E))[table(df.all$E)==max(table(df.all$E))] %>% as.numeric()
+# E_set=seq(2.6,6,0.2)
+for (k in E_set){
+  df.md=df.all[abs(df.all$E-k)<0.01, ]
+  idlist=unique(df.md$id)
+  wd=rep(NA,length(idlist))
+  for (i in 1:length(idlist)){
+    d1=df.md %>% subset(id==idlist[i])
+    d2=df.p %>% subset(id==idlist[i])
+    wd[i]=wasserstein1d(d1$prob,d2$prob)
+  }
+  wd_list[[as.character(k)]]=wd
+}
+
+wd_list %>% sapply(sum)
+```
+
+```{r}
+d.md=df.all %>% subset(E==2.2) %>%
+  select(id,ans,prob,truth) %>%
+  group_by(ans,truth) %>%
+  summarise(prob=mean(prob))
+
+d.p=df.p%>%
+  group_by(ans,truth) %>%
+  summarise(prob=mean(prob))
+  
+d.pic=merge(d.md,d.p,by=c("ans","truth")) 
+
+d.pic %>% 
+  mutate(Response=ans)%>%
+  ggplot(aes(x=prob.x,y=prob.y,color=Response))+
+  geom_abline(intercept = 0, slope = 1,linetype="dashed",color="gray")+
+  geom_point(alpha=0.85,size=5)+
+  scale_color_brewer(palette ="Set1")+
+  scale_y_continuous(limits = c(0,0.75),breaks = c(0,0.25,0.5,0.75))+
+  scale_x_continuous(limits = c(0,0.75),breaks = c(0,0.25,0.5,0.75))+
+  theme_classic()+
+  ylab("Human Proportion")+
+  xlab("Model Prediction")+
+  theme(text=element_text(size=16))
+
+# ggsave(file="FullFea.pdf",width = 7,height = 4.5)
+ggsave(file="MeanFea.pdf",width = 7,height = 4.5)
+```
+
+```{r}
+cor.test(d.pic$prob.x,d.pic$prob.y)
+```
+

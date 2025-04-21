@@ -1,0 +1,87 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# loading
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(data.table)
+library(patchwork)
+library(parallel)
+set.seed(2)
+```
+
+```{r}
+data.frame(source=c('a','b','c'),prior=c(0.6,0.34,0.06))%>% 
+  ggplot(aes(x=source,y=prior,fill=source))+
+  geom_col()+
+  scale_y_continuous(limits = c(0,0.7))+
+  ylab("Prior Probability")+
+  xlab("")+
+  theme_classic()+
+  theme(legend.position = "none",
+        text=element_text(size=19),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank())+
+  scale_fill_brewer(palette="Dark2")
+
+ggsave(file="demo.pdf",width = 6,height = 3.8)
+```
+
+```{r}
+d1=data.frame(source='a',
+              warmth=c(0.3,0.23,0.4,0.7,0.1,
+                       0.42,0.8,0.23,0.76,0.5,
+                       0.7,0.83,0.72,0.93,0.5,
+                       0.52,0.63,0.65
+                       ),
+              speed=c(8,4.2,7,7.5,6.1,
+                      4.43,9.2,7.3,8.1,6.6,
+                      4,7.8,6.2,7.2,8.3,
+                      6.2,7.6,6.85
+                      )) #flash light
+d2=data.frame(source='b',
+              warmth=c(0.5,0.62,0.63,0.61,0.7,0.45,0.73,0.68),
+              speed=c(1.2,2,3,3.2,3.2,2.52,4.3,2.23)) #helic
+d3=data.frame(source='c',
+              warmth=c(0.1,0.2),
+              speed=c(1.2,3.1)) #ufo
+
+d=rbind(d1,d2,d3) 
+
+sort(d2$warmth)
+sort(d2$speed)
+
+d$picked= (d$warmth<=0.73 & d$warmth>=0.33) & (d$speed<=4.5 & d$speed>=1.20)
+idx=which(d$picked)
+for (k in 1:100){
+  set.seed(k)
+  d$or=sample(c(1:nrow(d)))
+  if (max(d$or[idx])==max(d$or)){break}
+}
+
+d %>% 
+  subset(or<18)%>%
+  ggplot(aes(x=speed,y=warmth,color=source,shape=source))+
+  geom_point(size=3,alpha=0.9)+
+  theme_bw()+
+  scale_x_continuous(limits = c(0,10))+
+  scale_y_continuous(limits = c(0,1))+
+  theme(panel.grid = element_blank())+
+  scale_color_brewer(palette="Dark2")+
+  ylab("Average Warmth")+
+  xlab("Average Speed")+
+  theme(legend.title  = element_blank(),
+        text=element_text(size=19),
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+
+ggsave(file="sample2.pdf",width = 4.5,height = 3.8)
+```
+
+
+
