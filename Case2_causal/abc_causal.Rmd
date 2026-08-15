@@ -16,6 +16,7 @@ set.seed(2)
 ```
 
 ```{r}
+#Full Vector: all 12 cues (2 components * 2 types of cues * 3 interventions)
 myCue_FullFea<-function(df){
   c(df$ss_count_i_A_1[1],
     df$ss_count_i_A_2[1],
@@ -32,6 +33,7 @@ myCue_FullFea<-function(df){
     )
 }
 
+#Mean Vector
 myCue_MeanFea<-function(df){
   c(
     mean(df$ss_count_i_A_1[1],df$ss_count_i_A_2[1],df$ss_count_i_A_3[1]),
@@ -41,6 +43,7 @@ myCue_MeanFea<-function(df){
     )
 }
 
+#distance function
 myDis<-function(a,b){
   sqrt(sum((a-b)^2))
 }
@@ -59,8 +62,8 @@ myCue=myCue_MeanFea
 # save(df.sim,file="mySimSS_combined.Rda")
 ```
 
-
 ```{r}
+# empirical observations
 df.exp=read.csv("ss_exp1a.csv")%>%
   select(seed,truth,condition,id,A_pro,B_pro,
          ss_count_i_A_1,ss_count_i_A_2,ss_count_i_A_3,
@@ -69,6 +72,7 @@ df.exp=read.csv("ss_exp1a.csv")%>%
          ss_delay_i_B_1,ss_delay_i_B_2,ss_delay_i_B_3
          )
 
+# simulations, i.e. imagined observations
 load("mySimSS_combined.Rda")
 df.sim=df.sim %>%
     select(seed,truth,condition,id,A_pro,B_pro,
@@ -93,6 +97,7 @@ for (k in 1:length(ss_list)){
 # x=df.ppl %>% subset(id==df$id[1])
 ```
 
+# load the pre-generate ABC samples
 ```{r}
 df.sim1=df.sim %>%subset(condition=="reliable")
 t0=Sys.time()
@@ -119,9 +124,10 @@ for(k in 1: nrow(df.exp)){
 }
 ```
 
+# rejection sampling
 ```{r}
 N=100
-E_set=seq(0.4,3,0.2)
+E_set=seq(0.4,3,0.2) #grid search the epsilon
 S_set=c("GG","GN","GP","NG","NN","NP","PG","PN","PP")
 a_num=1000 #agent number
 
@@ -134,6 +140,8 @@ myRun<-function(k){
       slice(rep(1, length(S_set))) %>%
       mutate(E=E,ans = S_set,agent=0)
     for (j in 1:a_num){
+      # For each observer, run rejection sampling.
+      # To reduce runtime, generate samples in batches and reject them in bulk.
       df.ss=df.ss[sample(1:nrow(df.ss)),]
       tb=subset(df.ss,ss<=E)$truth[1:N] %>% table()
       ans=sample(names(tb[tb==max(tb)]),1)
@@ -156,61 +164,12 @@ df.ss %>%
   facet_wrap(~truth)
 ```
 
-```{r}
-# myLink<-function(d){
-#   d=d %>% mutate(condition=unlist(sapply(strsplit(id,"_"),"[[",4)),
-#                  truth=unlist(sapply(strsplit(id,"_"),"[[",3))) %>%
-#     mutate(ans_A=substr(ans,1,1) , ans_B=substr(ans,2,2)) %>%
-#     mutate(truth_A=substr(truth,1,1) , truth_B=substr(truth,2,2))
-#  
-#   x1=d %>% 
-#     mutate(ans=ans_A,state=truth_A,target="A") %>%
-#     group_by(ans,truth,condition,target, id) %>% 
-#     summarise(prob=sum(prob)) %>% 
-#     group_by(ans,truth,condition,target)%>%
-#     summarise(prob=mean(prob))
-#   x2=d %>% 
-#     mutate(ans=ans_B,state=truth_B,target="B") %>%
-#     group_by(ans,truth,condition,target, id) %>% 
-#     summarise(prob=sum(prob)) %>% 
-#     group_by(ans,truth,condition,target)%>%
-#     summarise(prob=mean(prob))
-#   
-#   rbind(x1,x2)
-# }
-# 
-# d.md=df.all %>%  subset(E==4.4) %>% myLink()
-# d.p=df.p%>% myLink()
-# d.pic=merge(d.md,d.p,by=c("ans","truth","condition","target"))
-# 
-# d.pic %>% 
-#   ggplot(aes(x=prob.x,y=prob.y,color=ans))+
-#   geom_point()+
-#   scale_y_continuous(limits = c(0,1))+
-#   scale_x_continuous(limits = c(0,1))
-
-# cor.test(d.pic$prob.x,d.pic$prob.y)
-
-
-# df.all %>% 
-#   subset(E==4.4)%>%
-#   subset(condition=="reliable")%>%
-#   group_by(truth,ans)%>%
-#   summarise(prob=mean(prob)) %>%
-#   ggplot(aes(x=ans,y=truth,fill=prob))+
-#   geom_tile()+
-#   scale_fill_gradientn(colours = c("white","black"))
-# 
-# df2=df.all%>% subset(E==2) %>%  subset(condition=="reliable")
-```
-
+# model fitting with participants' performance
 ```{r}
 # agent_file_name="agent_FullFea/"
 agent_file_name="agent_MeanFea/"
 df.all=data.frame()
 for (k in 1: nrow(df.exp)){
-  # tryCatch( {load(paste0(agent_file_name,df.exp$id[k],".Rda"))},
-  #           error=function(e){})
   load(paste0(agent_file_name,df.exp$id[k],".Rda"))
   df.all=rbind(df.all,df.E)
 }
@@ -274,7 +233,6 @@ d.pic %>%
   xlab("Model Prediction")+
   theme(text=element_text(size=16))
 
-# ggsave(file="FullFea.pdf",width = 7,height = 4.5)
 ggsave(file="MeanFea.pdf",width = 7,height = 4.5)
 ```
 

@@ -16,6 +16,7 @@ set.seed(2)
 
 # training set 
 ```{r}
+#16 insects used for training
 tr_ori=rbind(c(0,0,0,1,0,0), #1
           c(0,1,0,0,1,0), #2
           c(0,0,1,0,0,1), #3
@@ -36,8 +37,8 @@ tr_ori=rbind(c(0,0,0,1,0,0), #1
 ```
 
 ```{r}
+#generate training environments
 tr=tr_ori
-#cue validity
 vali_list=list()
 for (k in 1:20000){ #5000
   set.seed(k)
@@ -50,10 +51,11 @@ for (k in 1:20000){ #5000
     dtotal=length(idx_A)*length(idx_B)
     vali[i]=(dcorrect+1)/(dtotal+2)
   }
-  if (sum(vali>0.5)>=6){
+  if (sum(vali>0.5)>=6){ #only keep those having all positive cues
     vali_list[[as.character(k)]]=vali
   }
 }
+#check cue validity in all environments.
 unlist(vali_list) %>% quantile()
 
 # sapply(vali_list,sd) %>% hist
@@ -62,10 +64,12 @@ unlist(vali_list) %>% quantile()
 
 #testing set
 ```{r}
+#generate testing set, i.e. all 2016 pairwise comparisons among 64 insects
 tr_cha=tr_ori %>% apply(1, function(x){as.character(x) %>% paste(collapse = "")})
 sti=expand.grid(c(0,1),c(0,1),c(0,1),c(0,1),c(0,1),c(0,1)) %>%
   apply(1, function(x){as.character(x) %>% paste(collapse = "")})
 
+#remove those comparisons that have appeared in the training set
 xx=combn(sti, 2) %>% t%>% as.data.frame()
 # intersect(which(xx$V1 %in% tr_cha),which(xx$V2 %in% tr_cha))
 df.ref=xx[-intersect(which(xx$V1 %in% tr_cha),which(xx$V2 %in% tr_cha)),]
@@ -73,12 +77,15 @@ df.ref=xx[-intersect(which(xx$V1 %in% tr_cha),which(xx$V2 %in% tr_cha)),]
 ```
 
 # simulation
+## traditional models
 ```{r}
+#normative likelihood
 myNorLi<-function(st,cvali){
   tmp=as.numeric(unlist(strsplit(st,"*")))
   prod(abs(1-tmp-cvali))
 }
 
+#traditional models: normative, ttb heuristic, tally heuristic
 myTraditional<-function(cvali,nam){
   #normative
   vli=sti %>% lapply(myNorLi,cvali) 
@@ -126,8 +133,11 @@ myTraditional<-function(cvali,nam){
 }
 ```
 
+## ABC models
 ```{r}
-##################### SS
+#two hypotheses: 
+#H1: two alternatives are decreasingly ranked (choose the first one)
+#H1: two alternatives are increasingly ranked (choose the second one)
 h2=list()
 for (k in 1:15){
   for (j in 2:16){
@@ -138,34 +148,33 @@ for (k in 1:15){
 h1=lapply(h2, function(x){c(x[2],x[1])})
 h_all=list(h1,h2)
 trlen=length(h1)
-############################
-myCueFeature<-function(x,mylis,fea){
-  mylis[x[1],fea]-mylis[x[2],fea]
-}
 
+#summary statistics
 myCueTTB<-function(x,mylis,fea){
-  tmp=mylis[x[1],fea]-mylis[x[2],fea]
+  tmp=mylis[x[1],fea]-mylis[x[2],fea] #fea is the cue vector ranked by validity
   tmp2=tmp[which(tmp!=0)[1]]
   if (is.na(tmp2)){0}else{tmp2}
 }
 
 myCueTally<-function(x,mylis,fea){
-  sum(mylis[x[1],fea ])-sum(mylis[x[2],fea])
+  sum(mylis[x[1],fea])-sum(mylis[x[2],fea])#fea is all positive cues
 } 
 
+#distance function
 myDis<-function(ss,obs,dis){
   abs(obs-ss)<=dis
 }
 ```
 
 ```{r}
+#ABC function -- could be used to run ABC TBB or ABC Tally
 myABC<-function(vali,nam,N,myCue,dis){
   set.seed(as.numeric(nam))
   tr=tr_ori[order(sample(1:16)),]
   
   df.li=df.ref
   #ABC
-  df.li$V1_ss=NA #ttb
+  df.li$V1_ss=NA
   df.li$V2_ss=NA
 
   d.ss=rbind(
@@ -177,9 +186,11 @@ myABC<-function(vali,nam,N,myCue,dis){
     
     obs=myCue(c(1,2),rbind(v1,v2),vali)
     
-    ans=rep(NA,100)
+    ans=rep(NA,100) #simulate 100 observers to capture stochasticity 
     for (i in 1:100){
-      x=d.ss[sample(1:nrow(d.ss)),]
+      # For each observer, run rejection sampling.
+      # To reduce runtime, generate samples in batches and reject them in bulk.
+      x=d.ss[sample(c(1:nrow(d.ss)),size=10000,replace=T),]
       x2=x[myDis(x$ss,obs,dis),]
       if (nrow(x2)==0){next}
       tb=table(x2$truth[1:N])
@@ -193,12 +204,10 @@ myABC<-function(vali,nam,N,myCue,dis){
 ```
 
 ```{r}
-# subset(d.ss,ss==-6)[,"truth"] %>% table()
-```
-
-```{r}
+#all environments -- 400 were generated,the first 100 was used for main plot.
 df.App=data.frame(seed=c(1:length(vali_list)),vsd=unlist(lapply(vali_list,sd))) %>% mutate(ttb=NA,tal=NA,ttb_ss=NA,tal_ss_0=NA,tal_ss_1=NA)
 
+#generate model answers for each environment
 myRun<-function(par){
   k=par[1]
   N=par[2]
@@ -225,8 +234,6 @@ myRun<-function(par){
   
   df.li3=myABC(svali,nam,N,myCue=myCueTally,dis=0)
   df.App$tal_ss_0[1]=mean(v1_nor*df.li3$V1_ss+v2_nor*df.li3$V2_ss,na.rm=T)
-  
-  # svali=order(cvali,decreasing =T)[1:round(sum(cvali>0.5)/2)]
 
   df.li4=myABC(svali,nam,N,myCue=myCueTally,dis=1)
   df.App$tal_ss_1[1]=mean(v1_nor*df.li4$V1_ss+v2_nor*df.li4$V2_ss,na.rm=T)
@@ -235,25 +242,22 @@ myRun<-function(par){
          paste0("results/envir",k,"_sample",N,".Rda"))
 }
 
-# tmp=expand.grid(k=c(1:100),N=c(30,50,100)) %>% arrange_all()
-tmp=expand.grid(k=c(1:400),N=c(20)) %>% arrange_all()
+tmp=expand.grid(k=c(1:400),N=c(20,100)) %>% arrange_all()
 wholelist=split(tmp,seq(nrow(tmp))) %>% 
   lapply(function(row) as.numeric(row))
 
-mclapply(wholelist, myRun,mc.cores = 12)
-
-myRun(c(1,5))
+mclapply(wholelist, myRun,mc.cores = 8)
 ```
 
+# plot
 ```{r}
-# myMeansd<-function(p){sd(p)/mean(p)}
 df.pic=data.frame()
 sz=100
 for (k in 1:sz){
   load(paste0("results/envir",k,"_sample",20,".Rda"))
   df.pic=rbind(df.pic,df.App)
 }
-# df.pic$vsd=unlist(sapply(vali_list, myMeansd))[1:sz]#####
+
 df.pic$vm=unlist(sapply(vali_list, mean))[1:sz]
 df.pic$vm_group=df.pic$vm>median(df.pic$vm)
 df.pic30=df.pic %>% mutate(sample="N=20")
@@ -264,7 +268,7 @@ for (k in 1:sz){
   load(paste0("results/envir",k,"_sample",100,".Rda"))
   df.pic=rbind(df.pic,df.App)
 }
-# df.pic$vsd=unlist(sapply(vali_list, myMeansd))[1:sz]#####
+
 df.pic$vm=unlist(sapply(vali_list, mean))[1:sz]
 df.pic$vm_group=df.pic$vm>median(df.pic$vm)
 df.pic100=df.pic %>% mutate(sample= "N=100")
@@ -277,11 +281,10 @@ df.pic=rbind(df.pic30,df.pic100) %>%
 ```{r}
 df.pic%>%
   mutate(Model=factor(name,levels = c("ttb","tal","ttb_ss","tal_ss_1"),
-                     # labels = c("Take-the-best","Tally","ABC Take-the-best","ABC Tally")
                      labels = c("TTB","Tally","ABC TTB","ABC Tally")
                      ))%>%
   mutate(vm_group=factor(vm_group,levels = c(FALSE,TRUE),
-                     labels = c("Small Cue Validity","Large Cue Validity"),
+                     labels = c("Low Cue Validity","High Cue Validity"),
                      
                      ))%>%
   ggplot(aes(x=vsd,y=value,color=Model,shape=Model))+
@@ -365,16 +368,16 @@ for (k in 1:400){
 df.li.all=df.li.all[1:300,]
 
 df.li.all$vm_group=(df.li.all$vm>median(df.li.all$vm)) %>% 
-  factor(levels=c(F,T),labels = c("Small Cue Validity","Large Cue Validity"))
+  factor(levels=c(F,T),labels = c("Low Cue Validity","High Cue Validity"))
 df.li.all$vsd_group=(df.li.all$vsd>median(df.li.all$vsd)) %>% 
   factor(levels=c(F,T),labels = c("Low Cue Variation","High Cue Variation"))
 
 table(df.li.all$vm_group)
-sds=median(df.li.all$vsd[df.li.all$vm_group=="Small Cue Validity"])
-sdl=median(df.li.all$vsd[df.li.all$vm_group=="Large Cue Validity"])
+sds=median(df.li.all$vsd[df.li.all$vm_group=="Low Cue Validity"])
+sdl=median(df.li.all$vsd[df.li.all$vm_group=="High Cue Validity"])
 
 df.li.all=df.li.all %>% 
-  mutate(vsd_group=ifelse(vm_group=="Small Cue Validity",vsd>sds,vsd>sdl)) %>% 
+  mutate(vsd_group=ifelse(vm_group=="Low Cue Validity",vsd>sds,vsd>sdl)) %>% 
   mutate(vsd_group=factor(vsd_group,levels=c(F,T),labels = c("Low Cue Variation","High Cue Variation")))
 
 
@@ -393,10 +396,4 @@ df.li.all%>%
   
 ggsave(file="compensatory.pdf",width = 10,height = 6)
 # cor.test(df.li.all$nor,df.li.all$v_ss)
-```
-
-```{r}
-# for (k in 1:400){
-#   unlink(paste0("results/envir",k,"_sample",30,".Rda"))
-# }
 ```
